@@ -10,9 +10,15 @@ pub struct Friend {
     email: String,
 }
 
+impl Friend {
+    pub fn id(&self) -> i32 {
+        self.id
+    }
+}
+
 #[derive(Insertable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::friends)]
 pub struct NewFriend {
-    name: String,
-    email: String,
+    pub name: String,
+    pub email: String,
 }
