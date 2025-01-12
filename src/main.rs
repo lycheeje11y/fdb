@@ -4,11 +4,11 @@ pub mod schema;
 use crate::models::{Friend, NewFriend};
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, Request, StatusCode},
     response::{Json, Redirect, Response},
     routing::{get, post},
-    Form, Router,
+    Router,
 };
 use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
@@ -35,7 +35,6 @@ async fn view_friend(
         })
         .await
         .map_err(internal_error)?;
-
     Ok(Json(res))
 }
 
@@ -52,41 +51,58 @@ async fn view_all_friends(
         .await
         .map_err(internal_error)?
         .map_err(internal_error)?;
-
     Ok(Json(res))
 }
+
 #[derive(serde::Deserialize)]
-struct CreateFriend {
+struct Parameters {
     name: String,
-    email: String,
+}
+
+async fn get_by_name(
+    State(pool): State<deadpool_diesel::sqlite::Pool>,
+    paramaters: Query<Parameters>,
+) -> Result<Json<Vec<Friend>>, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(internal_error)?;
+
+    let res = conn
+        .interact(move |conn| {
+            schema::friends::dsl::friends
+                .filter(schema::friends::name.eq(paramaters.name.clone()))
+                .limit(5)
+                .select(Friend::as_select())
+                .load(conn)
+                .unwrap()
+        })
+        .await
+        .map_err(internal_error)?;
+
+    Ok(Json(res))
 }
 
 async fn create_friend(
     State(pool): State<deadpool_diesel::sqlite::Pool>,
-    new_friend_json: Json<NewFriend>,
-    new_friend_form: Form<CreateFriend>,
+    Json(new_friend): Json<NewFriend>,
 ) -> Result<Redirect, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
 
-    let res;
-    if let Some(new_friend_json) = new_friend_json {
-        res = add_friend_to_db(conn, new_friend_json).await
-    } else if let Some(new_friend_form) = new_friend_form {
-        let name = new_friend_form.name;
-        let email = new_friend_form.email;
-
-        NewFriend { name, email };
-    }
+    let res = conn
+        .interact(|conn| add_friend_to_db(conn, new_friend))
+        .await
+        .map_err(internal_error)?
+        .map_err(internal_error)?;
 
     Ok(Redirect::to(format!("/friends/{}", res.id()).as_str()))
 }
-async fn add_friend_to_db(conn: _, json: Json<NewFriend>) -> _ {
-    conn.interact(|conn| {
-        diesel::insert_into(schema::friends::table)
-            .values(json)
-            .returning(Friend::as_returning())
-            .get_result(conn)
-    })
+
+fn add_friend_to_db(
+    conn: &mut SqliteConnection,
+    new_friend: NewFriend,
+) -> Result<Friend, diesel::result::Error> {
+    diesel::insert_into(schema::friends::table)
+        .values(new_friend)
+        .returning(Friend::as_returning())
+        .get_result(conn)
 }
 
 #[tokio::main]
@@ -128,9 +144,10 @@ async fn main() {
     let app = Router::new()
         .route("/friends/:id", get(view_friend))
         .route("/friends/all", get(view_all_friends))
+        .route("/friends/search", get(get_by_name))
         .route("/friends/new", post(create_friend))
         .layer({ // LOGGING
-            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+        TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
                 let uri = request.uri().to_string();
 
                 info_span!("http_request", method = ?request.method(), uri, other_field = tracing::field::Empty)
