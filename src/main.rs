@@ -140,7 +140,7 @@ async fn main() {
             .unwrap();
     }
 
-    let addr = "0.0.0.0:3030";
+    let addr = "0.0.0.0:9999";
     let app = Router::new()
         .route("/friends/:id", get(view_friend))
         .route("/friends/all", get(view_all_friends))
