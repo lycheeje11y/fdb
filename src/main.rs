@@ -15,7 +15,7 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use std::time::Duration;
 use tower_http::{classify::ServerErrorsFailureClass, services::ServeDir, trace::TraceLayer};
 use tracing::{info, info_span, Span};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
@@ -107,6 +107,9 @@ fn add_friend_to_db(
 
 #[tokio::main]
 async fn main() {
+    let file_appender = tracing_appender::rolling::daily("logs", "fdb.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -119,6 +122,7 @@ async fn main() {
                 .into()
             }),
         )
+        .with(fmt::Layer::default().with_writer(non_blocking))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -172,6 +176,7 @@ async fn main() {
                         },
                     )
         })
+
         .nest_service("/assets", ServeDir::new("assets"))
         .with_state(pool);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
